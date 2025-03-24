@@ -1,0 +1,356 @@
+openapi: 3.0.0
+info:
+  title: Finance Records API
+  description: API for managing financial records, categories, and reports
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  
+  schemas:
+    Category:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Salary"
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CategoryInput:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+      required:
+        - name
+
+    FinanceRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        description:
+          type: string
+          example: "Monthly Salary"
+        amount:
+          type: number
+          format: float
+          example: 5000.00
+        type:
+          type: string
+          enum: [income, expense]
+          example: "income"
+        date:
+          type: string
+          format: date
+          example: "2024-03-15"
+        category_id:
+          type: integer
+          example: 1
+        category_name:
+          type: string
+          example: "Salary"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Report:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "March 2024 Report"
+        start_date:
+          type: string
+          format: date
+          example: "2024-03-01"
+        end_date:
+          type: string
+          format: date
+          example: "2024-03-31"
+        starting_amount:
+          type: number
+          format: float
+        total_income:
+          type: number
+          format: float
+          example: 7500.00
+        total_expense:
+          type: number
+          format: float
+          example: 2500.00
+        net_amount:
+          type: number
+          format: float
+          example: 5000.00
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ReportInput:
+      type: object
+      properties:
+        name:
+          type: string
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        starting_amount:
+          type: number
+          format: float
+          default: 0
+      required:
+        - name
+        - start_date
+        - end_date
+
+security:
+  - ApiKeyAuth: []
+
+paths:
+  /api/categories:
+    post:
+      summary: Create a new category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoryInput'
+      responses:
+        '201':
+          description: Category created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  message:
+                    type: string
+    
+    get:
+      summary: Get all categories
+      responses:
+        '200':
+          description: List of all categories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Category'
+
+  /api/categories/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    
+    put:
+      summary: Update a category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoryInput'
+      responses:
+        '200':
+          description: Category updated successfully
+        '404':
+          description: Category not found
+
+    delete:
+      summary: Delete a category
+      responses:
+        '200':
+          description: Category deleted successfully
+        '404':
+          description: Category not found
+
+  /api/finances:
+    post:
+      summary: Create a new finance record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - description
+                - amount
+                - type
+                - date
+                - category_id
+              properties:
+                description:
+                  type: string
+                amount:
+                  type: number
+                  format: float
+                type:
+                  type: string
+                  enum: [income, expense]
+                date:
+                  type: string
+                  format: date
+                category_id:
+                  type: integer
+      responses:
+        '201':
+          description: Finance record created successfully
+
+    get:
+      summary: Get all finance records
+      responses:
+        '200':
+          description: List of all finance records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FinanceRecord'
+
+  /api/finances/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+
+    get:
+      summary: Get a single finance record
+      responses:
+        '200':
+          description: Finance record details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FinanceRecord'
+        '404':
+          description: Finance record not found
+
+    put:
+      summary: Update a finance record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FinanceRecord'
+      responses:
+        '200':
+          description: Finance record updated successfully
+        '404':
+          description: Finance record not found
+
+    delete:
+      summary: Delete a finance record
+      responses:
+        '200':
+          description: Finance record deleted successfully
+        '404':
+          description: Finance record not found
+
+  /api/reports:
+    post:
+      summary: Create a new report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportInput'
+      responses:
+        '200':
+          description: Report created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+        '500':
+          description: Server error
+    
+    get:
+      summary: Get all reports
+      responses:
+        '200':
+          description: List of reports
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Report'
+        '500':
+          description: Server error
+
+  /api/reports/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+
+    get:
+      summary: Get a specific report
+      responses:
+        '200':
+          description: Report details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+        '404':
+          description: Report not found
+        '500':
+          description: Server error
+
+    delete:
+      summary: Delete a report
+      responses:
+        '200':
+          description: Report deleted successfully
+        '404':
+          description: Report not found 
