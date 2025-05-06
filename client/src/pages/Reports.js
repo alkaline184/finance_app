@@ -194,13 +194,24 @@ function Reports() {
                       </Typography>
                     </CardContent>
                     <CardActions>
-                      <Button
-                        size="small"
-                        color="primary"
-                        onClick={() => navigate(`/reports/${report.id}`)}
-                      >
-                        View Details
-                      </Button>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
+                        <Button
+                          size="small"
+                          color="primary"
+                          onClick={() => navigate(`/reports/${report.id}`)}
+                        >
+                          View Details
+                        </Button>
+                        {report.unsettled_count > 0 && (
+                          <Typography 
+                            variant="body2" 
+                            color="warning.main"
+                            sx={{ ml: 'auto' }}
+                          >
+                            {report.unsettled_count} unsettled
+                          </Typography>
+                        )}
+                      </Box>
                     </CardActions>
                   </Card>
                 </Grid>

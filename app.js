@@ -285,7 +285,8 @@ app.get('/api/reports', authenticateApiKey, async (req, res) => {
         r.*,
         COALESCE(SUM(CASE WHEN f.type = 'income' THEN f.amount ELSE 0 END), 0) as total_income,
         COALESCE(SUM(CASE WHEN f.type = 'expense' THEN f.amount ELSE 0 END), 0) as total_expense,
-        COALESCE(SUM(CASE WHEN f.type = 'income' THEN f.amount ELSE -f.amount END), 0) as net_amount
+        COALESCE(SUM(CASE WHEN f.type = 'income' THEN f.amount ELSE -f.amount END), 0) as net_amount,
+        COUNT(CASE WHEN f.settled = FALSE THEN 1 END) as unsettled_count
       FROM reports r
       LEFT JOIN report_records rr ON r.id = rr.report_id
       LEFT JOIN finance_records f ON f.id = rr.finance_record_id
@@ -322,23 +323,23 @@ app.get('/api/reports/:id', authenticateApiKey, async (req, res) => {
     
     // Get the records for this report
     const [records] = await pool.query(`
+      WITH RunningBalance AS (
+        SELECT 
+          f.*,
+          c.name as category_name,
+          SUM(CASE WHEN f.type = 'income' THEN f.amount ELSE -f.amount END) OVER (
+            ORDER BY f.transaction_date ASC, f.id ASC
+          ) as balance_without_starting
+        FROM finance_records f
+        JOIN report_records rr ON f.id = rr.finance_record_id
+        LEFT JOIN categories c ON f.category_id = c.id
+        WHERE rr.report_id = ?
+      )
       SELECT 
-        f.*,
-        c.name as category_name,
-        (
-          SELECT 
-            r.starting_amount + COALESCE(SUM(CASE WHEN f2.type = 'income' THEN f2.amount ELSE -f2.amount END), 0)
-          FROM reports r
-          LEFT JOIN report_records rr2 ON r.id = rr2.report_id
-          LEFT JOIN finance_records f2 ON f2.id = rr2.finance_record_id
-          WHERE r.id = ? AND (f2.transaction_date <= f.transaction_date OR f2.id IS NULL)
-          GROUP BY r.id
-        ) as running_balance
-      FROM finance_records f
-      JOIN report_records rr ON f.id = rr.finance_record_id
-      LEFT JOIN categories c ON f.category_id = c.id
-      WHERE rr.report_id = ?
-      ORDER BY f.transaction_date ASC
+        rb.*,
+        (SELECT starting_amount FROM reports WHERE id = ?) + rb.balance_without_starting as running_balance
+      FROM RunningBalance rb
+      ORDER BY rb.transaction_date ASC, rb.id ASC
     `, [req.params.id, req.params.id]);
 
     res.json({
@@ -421,6 +422,197 @@ app.post('/api/reports/:id/records', authenticateApiKey, async (req, res) => {
   } catch (error) {
     console.error('Error creating record:', error);
     res.status(500).json({ error: 'Error creating record' });
+  }
+});
+
+// Add multiple records to a report
+app.post('/api/reports/:id/records/batch', authenticateApiKey, async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const { records } = req.body;
+    const reportId = req.params.id;
+
+    // First, insert all finance records
+    const insertResults = await Promise.all(records.map(record => 
+      connection.execute(
+        'INSERT INTO finance_records (description, amount, type, category_id, transaction_date, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+        [record.description, record.amount, record.type, record.category_id, record.date]
+      )
+    ));
+
+    // Then, link them to the report
+    await Promise.all(insertResults.map(([result]) => 
+      connection.execute(
+        'INSERT INTO report_records (report_id, finance_record_id) VALUES (?, ?)',
+        [reportId, result.insertId]
+      )
+    ));
+
+    await connection.commit();
+    res.status(201).json({ message: 'Records added successfully' });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error adding batch records:', error);
+    res.status(500).json({ error: 'Error adding records' });
+  } finally {
+    connection.release();
+  }
+});
+
+// Dashboard endpoint
+app.get('/api/dashboard', async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        r.id,
+        r.start_date,
+        r.end_date,
+        r.starting_amount,
+        fr.id as record_id,
+        fr.amount,
+        fr.type,
+        fr.description,
+        fr.created_at,
+        c.id as category_id,
+        c.name as category_name
+      FROM reports r
+      LEFT JOIN report_records rr ON r.id = rr.report_id
+      LEFT JOIN finance_records fr ON rr.finance_record_id = fr.id
+      LEFT JOIN categories c ON fr.category_id = c.id
+      ORDER BY r.start_date DESC, c.name ASC
+    `;
+    
+    const [result] = await pool.execute(query);
+    
+    // Group the results by report
+    const reports = [];
+    const reportMap = new Map();
+
+    result.forEach(row => {
+      if (!reportMap.has(row.id)) {
+        const report = {
+          id: row.id,
+          start_date: row.start_date,
+          end_date: row.end_date,
+          starting_amount: row.starting_amount,
+          records: []
+        };
+        reportMap.set(row.id, report);
+        reports.push(report);
+      }
+
+      if (row.record_id) {
+        reportMap.get(row.id).records.push({
+          id: row.record_id,
+          amount: row.amount,
+          type: row.type,
+          description: row.description,
+          created_at: row.created_at,
+          category_id: row.category_id,
+          category_name: row.category_name
+        });
+      }
+    });
+
+    res.json(reports);
+  } catch (error) {
+    console.error('Error fetching dashboard data:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Recurring Transaction Routes
+
+// Create a new recurring transaction
+app.post('/api/recurring', authenticateApiKey, async (req, res) => {
+  try {
+    const { description, amount, type, category_id, day_of_the_month } = req.body;
+    const [result] = await pool.execute(
+      'INSERT INTO recurring_transactions (description, amount, type, category_id, day_of_the_month, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+      [description, amount, type, category_id, day_of_the_month || null]
+    );
+    res.status(201).json({ id: result.insertId, message: 'Recurring transaction created successfully' });
+  } catch (error) {
+    console.error('Error creating recurring transaction:', error);
+    res.status(500).json({ error: 'Error creating recurring transaction' });
+  }
+});
+
+// Get all recurring transactions with category names
+app.get('/api/recurring', authenticateApiKey, async (req, res) => {
+  try {
+    const [rows] = await pool.execute(`
+      SELECT r.*, c.name as category_name 
+      FROM recurring_transactions r 
+      LEFT JOIN categories c ON r.category_id = c.id 
+      ORDER BY 
+        CASE 
+          WHEN r.day_of_the_month IS NULL THEN 1 
+          ELSE 0 
+        END,
+        r.day_of_the_month ASC,
+        r.created_at DESC
+    `);
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching recurring transactions:', error);
+    res.status(500).json({ error: 'Error fetching recurring transactions' });
+  }
+});
+
+// Get a single recurring transaction with category name
+app.get('/api/recurring/:id', authenticateApiKey, async (req, res) => {
+  try {
+    const [rows] = await pool.execute(`
+      SELECT r.*, c.name as category_name 
+      FROM recurring_transactions r 
+      LEFT JOIN categories c ON r.category_id = c.id 
+      WHERE r.id = ?
+    `, [req.params.id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Recurring transaction not found' });
+    }
+    res.json(rows[0]);
+  } catch (error) {
+    console.error('Error fetching recurring transaction:', error);
+    res.status(500).json({ error: 'Error fetching recurring transaction' });
+  }
+});
+
+// Update a recurring transaction
+app.put('/api/recurring/:id', authenticateApiKey, async (req, res) => {
+  try {
+    const { description, amount, type, category_id, day_of_the_month } = req.body;
+    const [result] = await pool.execute(
+      'UPDATE recurring_transactions SET description = ?, amount = ?, type = ?, category_id = ?, day_of_the_month = ? WHERE id = ?',
+      [description, amount, type, category_id, day_of_the_month || null, req.params.id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Recurring transaction not found' });
+    }
+    res.json({ message: 'Recurring transaction updated successfully' });
+  } catch (error) {
+    console.error('Error updating recurring transaction:', error);
+    res.status(500).json({ error: 'Error updating recurring transaction' });
+  }
+});
+
+// Delete a recurring transaction
+app.delete('/api/recurring/:id', authenticateApiKey, async (req, res) => {
+  try {
+    const [result] = await pool.execute(
+      'DELETE FROM recurring_transactions WHERE id = ?',
+      [req.params.id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Recurring transaction not found' });
+    }
+    res.json({ message: 'Recurring transaction deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting recurring transaction:', error);
+    res.status(500).json({ error: 'Error deleting recurring transaction' });
   }
 });
 

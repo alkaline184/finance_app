@@ -36,3 +36,20 @@ ALTER TABLE finance_records DROP COLUMN date;
 
 -- Add settled column to finance_records
 ALTER TABLE finance_records ADD COLUMN settled BOOLEAN DEFAULT FALSE AFTER transaction_date;
+
+-- Create recurring_transactions table
+CREATE TABLE IF NOT EXISTS recurring_transactions (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    amount DECIMAL(10, 2) NOT NULL,
+    type ENUM('income', 'expense') NOT NULL,
+    description TEXT,
+    category_id INT,
+    created_at DATETIME,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (category_id) REFERENCES categories(id)
+);
+
+-- Add day_of_the_month field to recurring_transactions table
+ALTER TABLE recurring_transactions
+ADD COLUMN day_of_the_month INT,
+ADD CONSTRAINT chk_day_of_month CHECK (day_of_the_month IS NULL OR (day_of_the_month >= 1 AND day_of_the_month <= 31));

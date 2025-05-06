@@ -134,7 +134,7 @@ function Categories() {
   };
 
   return (
-    <Box>
+    <>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
         <Typography variant="h4">Categories</Typography>
         <Button
@@ -239,7 +239,7 @@ function Categories() {
           </Button>
         </DialogActions>
       </Dialog>
-    </Box>
+    </>
   );
 }
 

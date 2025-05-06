@@ -24,7 +24,11 @@ import {
   DialogContentText,
   Checkbox,
   Tooltip,
-  Grid
+  Grid,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemIcon
 } from '@mui/material';
 import { Add as AddIcon, Delete as DeleteIcon, Edit as EditIcon } from '@mui/icons-material';
 import {
@@ -70,6 +74,9 @@ function ReportDetails() {
     date: new Date().toISOString().split('T')[0],
   });
   const [categoryTotals, setCategoryTotals] = useState({ income: {}, expense: {} });
+  const [recurringOpen, setRecurringOpen] = useState(false);
+  const [recurringTransactions, setRecurringTransactions] = useState([]);
+  const [selectedRecurring, setSelectedRecurring] = useState([]);
 
   const fetchReport = async () => {
     try {
@@ -105,9 +112,26 @@ function ReportDetails() {
     }
   };
 
+  const fetchRecurringTransactions = async () => {
+    try {
+      const response = await fetch('/api/recurring', {
+        headers: {
+          'X-API-Key': process.env.REACT_APP_API_KEY,
+        },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setRecurringTransactions(data);
+      }
+    } catch (error) {
+      console.error('Error fetching recurring transactions:', error);
+    }
+  };
+
   useEffect(() => {
     fetchReport();
     fetchCategories();
+    fetchRecurringTransactions();
   }, [id]);
 
   const handleOpen = () => setOpen(true);
@@ -362,6 +386,76 @@ function ReportDetails() {
     }
   };
 
+  const handleRecurringOpen = () => setRecurringOpen(true);
+  
+  const handleRecurringClose = () => {
+    setRecurringOpen(false);
+    setSelectedRecurring([]);
+  };
+
+  const handleRecurringToggle = (transaction) => {
+    setSelectedRecurring(prev => {
+      const isSelected = prev.find(t => t.id === transaction.id);
+      if (isSelected) {
+        return prev.filter(t => t.id !== transaction.id);
+      } else {
+        return [...prev, transaction];
+      }
+    });
+  };
+
+  const calculateTransactionDate = (dayOfMonth, startDate) => {
+    if (!dayOfMonth) return new Date().toISOString().split('T')[0];
+    
+    const reportStartDate = new Date(startDate);
+    const transactionDate = new Date(
+      reportStartDate.getFullYear(),
+      reportStartDate.getMonth(),
+      dayOfMonth
+    );
+    
+    // If the day is greater than the days in the month, set to the last day
+    const lastDayOfMonth = new Date(
+      reportStartDate.getFullYear(),
+      reportStartDate.getMonth() + 1,
+      0
+    ).getDate();
+    
+    if (dayOfMonth > lastDayOfMonth) {
+      transactionDate.setDate(lastDayOfMonth);
+    }
+    
+    return transactionDate.toISOString().split('T')[0];
+  };
+
+  const handleAddRecurring = async () => {
+    try {
+      const recordsToAdd = selectedRecurring.map(transaction => ({
+        description: transaction.description,
+        amount: transaction.amount,
+        type: transaction.type,
+        category_id: transaction.category_id,
+        date: calculateTransactionDate(transaction.day_of_the_month, report.start_date)
+      }));
+
+      const response = await fetch(`/api/reports/${id}/records/batch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': process.env.REACT_APP_API_KEY,
+        },
+        body: JSON.stringify({ records: recordsToAdd }),
+      });
+
+      if (response.ok) {
+        handleRecurringClose();
+        fetchReport();
+      }
+    } catch (error) {
+      console.error('Error adding recurring transactions:', error);
+    }
+  };
+
   if (!report) {
     return <Typography>Loading...</Typography>;
   }
@@ -409,13 +503,20 @@ function ReportDetails() {
         </Grid>
       </Grid>
 
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 3 }}>
+      <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
         <Button
           variant="contained"
           startIcon={<AddIcon />}
           onClick={handleOpen}
         >
           Add Record
+        </Button>
+        <Button
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={handleRecurringOpen}
+        >
+          Add Recurring
         </Button>
       </Box>
 
@@ -664,6 +765,51 @@ function ReportDetails() {
         <DialogActions>
           <Button onClick={() => setEditReportOpen(false)}>Cancel</Button>
           <Button onClick={handleEditReportSubmit} variant="contained">Save</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={recurringOpen} onClose={handleRecurringClose} maxWidth="md" fullWidth>
+        <DialogTitle>Add Recurring Transactions</DialogTitle>
+        <DialogContent>
+          <List>
+            {recurringTransactions.map((transaction) => (
+              <ListItem
+                key={transaction.id}
+                onClick={() => handleRecurringToggle(transaction)}
+                sx={{ 
+                  cursor: 'pointer',
+                  '&:hover': {
+                    backgroundColor: 'rgba(0, 0, 0, 0.04)'
+                  }
+                }}
+              >
+                <ListItemIcon>
+                  <Checkbox
+                    checked={selectedRecurring.some(t => t.id === transaction.id)}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      handleRecurringToggle(transaction);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </ListItemIcon>
+                <ListItemText
+                  primary={transaction.description}
+                  secondary={`${transaction.type === 'income' ? '+' : '-'}$${Math.abs(transaction.amount).toFixed(2)} | ${transaction.category_name} | ${transaction.day_of_the_month ? `Day: ${transaction.day_of_the_month}` : 'Any day'}`}
+                />
+              </ListItem>
+            ))}
+          </List>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleRecurringClose}>Cancel</Button>
+          <Button
+            onClick={handleAddRecurring}
+            variant="contained"
+            disabled={selectedRecurring.length === 0}
+          >
+            Add Selected ({selectedRecurring.length})
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>
